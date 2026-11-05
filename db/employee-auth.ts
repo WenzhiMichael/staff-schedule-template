@@ -1,11 +1,16 @@
 import { getAvailabilityD1 } from "./availability";
+import { requestIp } from "./request-ip";
 
 const SESSION_COOKIE = "staff_schedule_employee_session";
 const SETUP_COOKIE = "staff_schedule_employee_setup";
+const DEVICE_COOKIE = "staff_schedule_employee_device";
 const SESSION_SECONDS = 30 * 24 * 60 * 60;
 const SETUP_SECONDS = 15 * 60;
+const DEVICE_SECONDS = 365 * 24 * 60 * 60;
 const LOGIN_WINDOW_SECONDS = 15 * 60;
 const MAX_LOGIN_ATTEMPTS = 5;
+// Applies across every IP, so rotating addresses cannot brute-force a four-digit PIN.
+const MAX_ACCOUNT_LOGIN_ATTEMPTS = 10;
 const encoder = new TextEncoder();
 
 function toHex(bytes: Uint8Array) {
@@ -132,28 +137,89 @@ export async function revokeEmployeeSession(request: Request) {
   }
 }
 
-export async function employeeClientKey(request: Request, employeeId: number) {
-  const forwarded = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
-  return sha256(`${forwarded}|${employeeId}`);
+// ---- Device binding -------------------------------------------------------
+// The one-time setup link binds the phone to one employee. The staff home page
+// only ever shows that employee, so the full name list is never public.
+
+export async function createEmployeeDevice(request: Request, employeeId: number) {
+  const token = randomToken();
+  const now = Math.floor(Date.now() / 1000);
+  const db = getAvailabilityD1();
+  await db.batch([
+    db.prepare("DELETE FROM employee_devices WHERE expires_at <= ?").bind(now),
+    db.prepare("INSERT INTO employee_devices (token_hash, employee_id, expires_at) VALUES (?, ?, ?)")
+      .bind(await hashEmployeeToken(token), employeeId, now + DEVICE_SECONDS),
+  ]);
+  return cookie(request, DEVICE_COOKIE, token, DEVICE_SECONDS);
 }
 
-export async function employeeLoginBlocked(clientKey: string) {
+export async function getDeviceEmployee(request: Request) {
+  const token = cookieValue(request, DEVICE_COOKIE);
+  if (!token || !/^[A-Za-z0-9_-]{40,60}$/.test(token)) return null;
+  return getAvailabilityD1().prepare(
+    `SELECT e.id, e.display_name
+     FROM employee_devices d
+     JOIN availability_employees e ON e.id = d.employee_id
+     WHERE d.token_hash = ? AND d.expires_at > ? AND e.active = 1`,
+  ).bind(await hashEmployeeToken(token), Math.floor(Date.now() / 1000)).first<{ id: number; display_name: string }>();
+}
+
+export async function revokeEmployeeDevice(request: Request) {
+  const token = cookieValue(request, DEVICE_COOKIE);
+  if (token && /^[A-Za-z0-9_-]{40,60}$/.test(token)) {
+    await getAvailabilityD1().prepare("DELETE FROM employee_devices WHERE token_hash = ?").bind(await hashEmployeeToken(token)).run();
+  }
+}
+
+export function clearEmployeeDeviceCookie(request: Request) {
+  return cookie(request, DEVICE_COOKIE, "", 0);
+}
+
+// ---- Login rate limits -----------------------------------------------------
+
+export async function employeeLoginKeys(request: Request, employeeId: number) {
+  return {
+    client: await sha256(`${requestIp(request)}|${employeeId}`),
+    account: `account:${employeeId}`,
+  };
+}
+
+type LoginKeys = Awaited<ReturnType<typeof employeeLoginKeys>>;
+
+async function attemptsBlocked(clientKey: string, max: number) {
   const now = Math.floor(Date.now() / 1000);
   const row = await getAvailabilityD1().prepare("SELECT attempts, window_started FROM employee_login_attempts WHERE client_key = ?").bind(clientKey).first<{ attempts: number; window_started: number }>();
   if (!row || now - row.window_started >= LOGIN_WINDOW_SECONDS) return false;
-  return row.attempts >= MAX_LOGIN_ATTEMPTS;
+  return row.attempts >= max;
 }
 
-export async function recordEmployeeLoginFailure(clientKey: string) {
+export async function employeeLoginBlocked(keys: LoginKeys) {
+  const [client, account] = await Promise.all([
+    attemptsBlocked(keys.client, MAX_LOGIN_ATTEMPTS),
+    attemptsBlocked(keys.account, MAX_ACCOUNT_LOGIN_ATTEMPTS),
+  ]);
+  return client || account;
+}
+
+async function recordFailure(clientKey: string) {
   const now = Math.floor(Date.now() / 1000);
   await getAvailabilityD1().prepare(
     `INSERT INTO employee_login_attempts (client_key, attempts, window_started) VALUES (?, 1, ?)
      ON CONFLICT(client_key) DO UPDATE SET
-       attempts = CASE WHEN ? - window_started >= ? THEN 1 ELSE attempts + 1 END,
-       window_started = CASE WHEN ? - window_started >= ? THEN ? ELSE window_started END`,
+       attempts = CASE WHEN ? - employee_login_attempts.window_started >= ? THEN 1 ELSE employee_login_attempts.attempts + 1 END,
+       window_started = CASE WHEN ? - employee_login_attempts.window_started >= ? THEN ? ELSE employee_login_attempts.window_started END`,
   ).bind(clientKey, now, now, LOGIN_WINDOW_SECONDS, now, LOGIN_WINDOW_SECONDS, now).run();
 }
 
-export async function clearEmployeeLoginFailures(clientKey: string) {
-  await getAvailabilityD1().prepare("DELETE FROM employee_login_attempts WHERE client_key = ?").bind(clientKey).run();
+export async function recordEmployeeLoginFailure(keys: LoginKeys) {
+  await recordFailure(keys.client);
+  await recordFailure(keys.account);
+}
+
+export async function clearEmployeeLoginFailures(keys: LoginKeys) {
+  const db = getAvailabilityD1();
+  await db.batch([
+    db.prepare("DELETE FROM employee_login_attempts WHERE client_key = ?").bind(keys.client),
+    db.prepare("DELETE FROM employee_login_attempts WHERE client_key = ?").bind(keys.account),
+  ]);
 }

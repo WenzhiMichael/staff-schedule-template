@@ -20,6 +20,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
        ON CONFLICT(employee_id) DO UPDATE SET pin_hash = NULL, pin_set_at = NULL, updated_at = CURRENT_TIMESTAMP`,
     ).bind(employeeId),
     db.prepare("DELETE FROM employee_sessions WHERE employee_id = ?").bind(employeeId),
+    db.prepare("DELETE FROM employee_devices WHERE employee_id = ?").bind(employeeId),
     db.prepare("DELETE FROM employee_login_attempts"),
   ]);
   return Response.json({ ok: true, employeeId, link: `${new URL(request.url).origin}/e/${token}` });

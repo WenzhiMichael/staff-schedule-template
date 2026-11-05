@@ -1,4 +1,5 @@
 import { getAvailabilityD1, initializeAvailabilityDatabase } from "../../../../db/availability";
+import { serverError } from "../../../../db/errors";
 import {
   createManagerSessionCookie,
   managerClientKey,
@@ -8,6 +9,9 @@ import {
 
 const WINDOW_SECONDS = 15 * 60;
 const MAX_ATTEMPTS = 5;
+// IP-independent ceiling, so rotating addresses cannot brute-force the manager PIN.
+const MAX_GLOBAL_ATTEMPTS = 30;
+const GLOBAL_KEY = "manager:all-clients";
 
 type AttemptRow = { attempts: number; window_started: number };
 
@@ -27,8 +31,12 @@ export async function POST(request: Request) {
     const current = await db.prepare(
       "SELECT attempts, window_started FROM manager_login_attempts WHERE client_key = ?",
     ).bind(clientKey).first<AttemptRow>();
+    const global = await db.prepare(
+      "SELECT attempts, window_started FROM manager_login_attempts WHERE client_key = ?",
+    ).bind(GLOBAL_KEY).first<AttemptRow>();
     const inWindow = Boolean(current && now - current.window_started < WINDOW_SECONDS);
-    if (inWindow && (current?.attempts ?? 0) >= MAX_ATTEMPTS) {
+    const globalInWindow = Boolean(global && now - global.window_started < WINDOW_SECONDS);
+    if ((inWindow && (current?.attempts ?? 0) >= MAX_ATTEMPTS) || (globalInWindow && (global?.attempts ?? 0) >= MAX_GLOBAL_ATTEMPTS)) {
       return Response.json({ error: "尝试次数过多，请 15 分钟后再试。" }, { status: 429 });
     }
 
@@ -40,6 +48,11 @@ export async function POST(request: Request) {
          VALUES (?, ?, ?)
          ON CONFLICT(client_key) DO UPDATE SET attempts = excluded.attempts, window_started = excluded.window_started`,
       ).bind(clientKey, attempts, windowStarted).run();
+      await db.prepare(
+        `INSERT INTO manager_login_attempts (client_key, attempts, window_started)
+         VALUES (?, ?, ?)
+         ON CONFLICT(client_key) DO UPDATE SET attempts = excluded.attempts, window_started = excluded.window_started`,
+      ).bind(GLOBAL_KEY, globalInWindow ? (global?.attempts ?? 0) + 1 : 1, globalInWindow ? global!.window_started : now).run();
       const status = attempts >= MAX_ATTEMPTS ? 429 : 401;
       const error = status === 429 ? "尝试次数过多，请 15 分钟后再试。" : "经理 PIN 不正确。";
       return Response.json({ error }, { status });
@@ -48,7 +61,6 @@ export async function POST(request: Request) {
     await db.prepare("DELETE FROM manager_login_attempts WHERE client_key = ?").bind(clientKey).run();
     return Response.json({ ok: true }, { headers: { "set-cookie": await createManagerSessionCookie(request) } });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "经理登录暂时不可用。";
-    return Response.json({ error: message }, { status: 500 });
+    return serverError(error, "经理登录暂时不可用。");
   }
 }

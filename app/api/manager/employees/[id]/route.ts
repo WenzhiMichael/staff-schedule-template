@@ -5,6 +5,7 @@ import {
   getEmployee,
   initializeAvailabilityDatabase,
 } from "../../../../../db/availability";
+import { serverError } from "../../../../../db/errors";
 import { hasManagerSession } from "../../../../../db/manager-auth";
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -28,7 +29,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     if (!employee) return Response.json({ error: "找不到这位员工。" }, { status: 404 });
     return Response.json({ ok: true, employee });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "姓名暂时无法保存。";
-    return Response.json({ error: message }, { status: 500 });
+    return serverError(error, "姓名暂时无法保存。");
   }
 }

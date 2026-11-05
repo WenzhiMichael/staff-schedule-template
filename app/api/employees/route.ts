@@ -1,11 +1,18 @@
-import { initializeAvailabilityDatabase, listEmployees } from "../../../db/availability";
+import { initializeAvailabilityDatabase } from "../../../db/availability";
+import { getDeviceEmployee } from "../../../db/employee-auth";
+import { serverError } from "../../../db/errors";
 
-export async function GET() {
+// Never returns the team list. A phone only learns the one employee that its
+// one-time setup link bound it to; an unknown device gets `employee: null`.
+export async function GET(request: Request) {
   try {
     await initializeAvailabilityDatabase();
-    return Response.json({ employees: await listEmployees() });
+    const device = await getDeviceEmployee(request);
+    return Response.json(
+      { employee: device ? { id: device.id, displayName: device.display_name } : null },
+      { headers: { "cache-control": "no-store" } },
+    );
   } catch (error) {
-    const message = error instanceof Error ? error.message : "员工名单暂时无法打开。";
-    return Response.json({ error: message }, { status: 500 });
+    return serverError(error, "员工入口暂时无法打开。");
   }
 }

@@ -3,15 +3,16 @@ import {
   getAvailabilityD1,
   getEmployeeAvailability,
   getPublishedSchedule,
+  getScheduleVisibility,
   initializeAvailabilityDatabase,
   nextWeekStart,
 } from "../../../db/availability";
-import { getEmployeeSession } from "../../../db/employee-auth";
+import { createEmployeeDevice, getDeviceEmployee, getEmployeeSession } from "../../../db/employee-auth";
+import { serverError } from "../../../db/errors";
 import { currentWeekStart } from "../../../db/schedule";
 
 function routeError(error: unknown) {
-  const message = error instanceof Error ? error.message : "未知错误";
-  return Response.json({ error: message }, { status: 500 });
+  return serverError(error, "个人时间暂时无法打开。");
 }
 
 export async function GET(request: Request) {
@@ -21,12 +22,21 @@ export async function GET(request: Request) {
     if (!session) return Response.json({ error: "请使用经理发给你的个人链接进入。" }, { status: 401 });
     const weekStart = nextWeekStart();
     const employee = { id: session.id, displayName: session.display_name };
-    const [record, currentSchedule, nextSchedule] = await Promise.all([
+    const scheduleVisibility = await getScheduleVisibility();
+    const onlyEmployeeId = scheduleVisibility === "own" ? session.id : undefined;
+    const [record, currentSchedule, nextSchedule, device] = await Promise.all([
       getEmployeeAvailability(session.id, weekStart),
-      getPublishedSchedule(currentWeekStart()),
-      getPublishedSchedule(weekStart),
+      getPublishedSchedule(currentWeekStart(), onlyEmployeeId),
+      getPublishedSchedule(weekStart, onlyEmployeeId),
+      getDeviceEmployee(request),
     ]);
-    return Response.json({ employee, record, weekStart, currentWeekStart: currentWeekStart(), publishedSchedules: { current: currentSchedule, next: nextSchedule } });
+    // Phones signed in before device binding existed get bound on their next visit.
+    const headers = new Headers({ "cache-control": "no-store" });
+    if (device?.id !== session.id) headers.append("set-cookie", await createEmployeeDevice(request, session.id));
+    return Response.json(
+      { employee, record, weekStart, currentWeekStart: currentWeekStart(), scheduleVisibility, publishedSchedules: { current: currentSchedule, next: nextSchedule } },
+      { headers },
+    );
   } catch (error) {
     return routeError(error);
   }

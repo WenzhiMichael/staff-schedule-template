@@ -1,3 +1,5 @@
+import { requestIp } from "./request-ip";
+
 const COOKIE_NAME = "staff_schedule_manager_session";
 const SESSION_SECONDS = 8 * 60 * 60;
 const encoder = new TextEncoder();
@@ -101,7 +103,7 @@ export async function hasManagerSession(request: Request) {
 }
 
 export async function managerClientKey(request: Request) {
-  const forwarded = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  const forwarded = requestIp(request);
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(`${forwarded}|${sessionSecret()}`));
   return toBase64Url(new Uint8Array(digest));
 }

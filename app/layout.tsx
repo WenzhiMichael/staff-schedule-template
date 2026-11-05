@@ -21,6 +21,8 @@ export async function generateMetadata(): Promise<Metadata> {
     },
     twitter: { card: "summary", title, description },
     icons: { icon: "/schedule-logo.svg" },
+    // Internal staff tool: keep login pages and names out of search results.
+    robots: { index: false, follow: false, nocache: true },
   };
 }
 
