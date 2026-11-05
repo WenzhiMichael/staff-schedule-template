@@ -51,7 +51,9 @@ test("keeps employee and manager data paths separate", async () => {
   assert.match(employeeUi, /staff-name-picker|四位员工 PIN|publishedSchedules/);
   assert.match(availabilityRoute, /getEmployeeSession/);
   assert.doesNotMatch(availabilityRoute, /body\.employeeId|searchParams\.get\("employeeId"\)/);
-  assert.match(employeeListRoute, /listEmployees/);
+  // The public entry must never return the team list, only the device-bound employee.
+  assert.doesNotMatch(employeeListRoute, /listEmployees/);
+  assert.match(employeeListRoute, /getDeviceEmployee/);
   assert.doesNotMatch(availabilityRoute, /getManagerWeek/);
   assert.match(managerRoute, /hasManagerSession/);
   assert.match(employeeAuth, /SHA-256|HttpOnly|SameSite=Strict/);

@@ -65,6 +65,18 @@ const schemaStatements = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_employee_sessions_employee ON employee_sessions(employee_id)`,
   `CREATE INDEX IF NOT EXISTS idx_employee_sessions_expires ON employee_sessions(expires_at)`,
+  `CREATE TABLE IF NOT EXISTS employee_devices (
+    token_hash TEXT PRIMARY KEY,
+    employee_id INTEGER NOT NULL REFERENCES availability_employees(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)::text
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_employee_devices_employee ON employee_devices(employee_id)`,
+  `CREATE TABLE IF NOT EXISTS schedule_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)::text
+  )`,
   `CREATE TABLE IF NOT EXISTS employee_login_attempts (
     client_key TEXT PRIMARY KEY,
     attempts INTEGER NOT NULL DEFAULT 0,
@@ -254,7 +266,32 @@ export async function getScheduleAssignments(weekStart: string, state: "draft" |
   }));
 }
 
-export async function getPublishedSchedule(weekStart: string) {
+export type ScheduleVisibility = "full" | "own";
+
+export function validScheduleVisibility(value: unknown): value is ScheduleVisibility {
+  return value === "full" || value === "own";
+}
+
+/** Whether staff see the whole published team schedule, or only their own shifts. */
+export async function getScheduleVisibility(): Promise<ScheduleVisibility> {
+  const row = await getAvailabilityD1().prepare(
+    "SELECT value FROM schedule_settings WHERE key = 'employee_schedule_visibility'",
+  ).first<{ value: string }>();
+  return validScheduleVisibility(row?.value) ? row.value : "full";
+}
+
+export async function setScheduleVisibility(value: ScheduleVisibility) {
+  await getAvailabilityD1().prepare(
+    `INSERT INTO schedule_settings (key, value) VALUES ('employee_schedule_visibility', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+  ).bind(value).run();
+}
+
+/**
+ * Published schedule for a week. Pass `onlyEmployeeId` to strip every other
+ * employee's name and shifts before the data leaves the server.
+ */
+export async function getPublishedSchedule(weekStart: string, onlyEmployeeId?: number) {
   const [publication, assignments, employees] = await Promise.all([
     getAvailabilityD1().prepare(
       "SELECT published_at FROM weekly_schedule_publications WHERE week_start = ?",
@@ -262,7 +299,14 @@ export async function getPublishedSchedule(weekStart: string) {
     getScheduleAssignments(weekStart, "published"),
     listEmployees(),
   ]);
-  return { weekStart, publishedAt: publication?.published_at ?? null, assignments, employees };
+  const publishedAt = publication?.published_at ?? null;
+  if (onlyEmployeeId === undefined) return { weekStart, publishedAt, assignments, employees };
+  return {
+    weekStart,
+    publishedAt,
+    assignments: assignments.filter((item) => item.employeeId === onlyEmployeeId),
+    employees: employees.filter((person) => person.id === onlyEmployeeId),
+  };
 }
 
 export async function getEmployeeLinkStates() {

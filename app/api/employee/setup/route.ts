@@ -1,10 +1,12 @@
 import {
   clearEmployeeSetupCookie,
+  createEmployeeDevice,
   createEmployeePinHash,
   createEmployeeSession,
   getSetupEmployee,
 } from "../../../../db/employee-auth";
 import { getAvailabilityD1, initializeAvailabilityDatabase } from "../../../../db/availability";
+import { serverError } from "../../../../db/errors";
 
 export async function GET(request: Request) {
   await initializeAvailabilityDatabase();
@@ -31,14 +33,15 @@ export async function POST(request: Request) {
       ).bind(employee.id, pinHash),
       db.prepare("DELETE FROM employee_access_tokens WHERE employee_id = ?").bind(employee.id),
       db.prepare("DELETE FROM employee_sessions WHERE employee_id = ?").bind(employee.id),
+      db.prepare("DELETE FROM employee_devices WHERE employee_id = ?").bind(employee.id),
     ]);
     const sessionCookie = await createEmployeeSession(request, employee.id);
     const headers = new Headers();
     headers.append("set-cookie", sessionCookie);
+    headers.append("set-cookie", await createEmployeeDevice(request, employee.id));
     headers.append("set-cookie", clearEmployeeSetupCookie(request));
     return Response.json({ ok: true }, { headers });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "员工 PIN 暂时无法设置。";
-    return Response.json({ error: message }, { status: 500 });
+    return serverError(error, "员工 PIN 暂时无法设置。");
   }
 }

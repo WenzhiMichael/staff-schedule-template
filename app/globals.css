@@ -304,3 +304,7 @@ a { color: inherit; }
   .availability-row > header em { grid-column: 1 / -1; }
   .staff-name-picker { grid-template-columns: 1fr; }
 }
+
+.privacy-setting { margin: 0 0 18px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; }
+.privacy-setting legend { padding: 0 6px; font-weight: 850; }
+.privacy-setting p { margin: 10px 0 0; color: var(--muted); font-size: var(--text-sm); }

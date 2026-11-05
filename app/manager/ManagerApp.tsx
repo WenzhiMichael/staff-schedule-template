@@ -16,8 +16,9 @@ type ManagerRecord = { employeeId: number; displayName: string; weekStart: strin
 type LinkState = { employeeId: number; hasLink: boolean; linkUpdatedAt: string | null; pinConfigured: boolean };
 type ManagerData = {
   weekStart: string; currentWeekStart: string; records: ManagerRecord[]; draftAssignments: ScheduleAssignment[];
-  publishedAt: string | null; linkStates: LinkState[]; error?: string;
+  publishedAt: string | null; linkStates: LinkState[]; scheduleVisibility?: ScheduleVisibility; error?: string;
 };
+type ScheduleVisibility = "full" | "own";
 type EditState = ScheduleAssignment & {
   previousShiftCode: ShiftCode;
   displayName: string;
@@ -39,6 +40,8 @@ export default function ManagerApp() {
   const [generatedLinks, setGeneratedLinks] = useState<Record<number, string>>({});
   const [draftNames, setDraftNames] = useState<Record<number, string>>({});
   const [publishedAt, setPublishedAt] = useState<string | null>(null);
+  const [scheduleVisibility, setScheduleVisibility] = useState<ScheduleVisibility>("full");
+  const [savingVisibility, setSavingVisibility] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [savingId, setSavingId] = useState<number | null>(null);
@@ -59,7 +62,7 @@ export default function ManagerApp() {
       if (!response.ok) throw new Error(data.error || "经理排班页面暂时无法打开。");
       setAuthorized(true); setWeekStart(data.weekStart); setCurrentWeekStart(data.currentWeekStart);
       setRecords(data.records); setAssignments(data.draftAssignments);
-      setLinkStates(data.linkStates); setPublishedAt(data.publishedAt);
+      setLinkStates(data.linkStates); setPublishedAt(data.publishedAt); setScheduleVisibility(data.scheduleVisibility ?? "full");
       setDraftNames(Object.fromEntries(data.records.map((record) => [record.employeeId, record.displayName])));
       setError("");
     } catch (caught) { setError(caught instanceof Error ? caught.message : "经理排班页面暂时无法打开。"); }
@@ -77,6 +80,16 @@ export default function ManagerApp() {
   }
 
   async function logout() { await fetch("/api/manager/logout", { method: "POST" }); setAuthorized(false); setRecords([]); }
+
+  async function saveVisibility(next: ScheduleVisibility) {
+    setSavingVisibility(true); setError("");
+    const response = await fetch("/api/manager/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scheduleVisibility: next }) });
+    const data = await response.json() as { scheduleVisibility?: ScheduleVisibility; error?: string };
+    setSavingVisibility(false);
+    if (!response.ok || !data.scheduleVisibility) { setError(data.error || "设置暂时无法保存。"); return; }
+    setScheduleVisibility(data.scheduleVisibility);
+    setMessage(data.scheduleVisibility === "own" ? "员工现在只能看到自己的班次。" : "员工现在可以看到完整班表。");
+  }
 
   async function saveName(employeeId: number) {
     setSavingId(employeeId); setError("");
@@ -212,7 +225,7 @@ export default function ManagerApp() {
           <div className="publish-bar"><div><strong>{t("发布前检查", "PRE-PUBLISH CHECK")}</strong><span>{warnings.length ? language === "en" ? `${warnings.length} item${warnings.length === 1 ? "" : "s"} to review` : `${warnings.length} 项需要留意` : t("没有发现冲突", "No conflicts found")}</span><small>{t("保存后员工看不到；发布后员工可以查看。", "Saved drafts stay private; employees see a schedule only after publishing.")}</small></div><div className="schedule-actions"><ScheduleExports records={records} assignments={assignments} weekStart={weekStart} publishedAt={publishedAt} language={language} /><button className="save-schedule" disabled={savingSchedule} onClick={saveFinalSchedule}>{savingSchedule ? t("保存中…", "Saving…") : t("保存最终班表", "Save final schedule")}</button><button disabled={savingSchedule} onClick={publishSchedule}>{publishedAt ? t("重新发布最终班表", "Republish final schedule") : t("发布最终班表", "Publish final schedule")}</button></div></div>
           {warnings.length > 0 && <div className="warning-list">{warnings.map((warning) => <p key={warning}>! {warning}</p>)}</div>}
         </section>
-      </> : <EmployeeManager records={records} linkStates={linkStates} generatedLinks={generatedLinks} draftNames={draftNames} savingId={savingId} setDraftNames={setDraftNames} saveName={saveName} generateLink={generateLink} />}
+      </> : <EmployeeManager records={records} linkStates={linkStates} generatedLinks={generatedLinks} draftNames={draftNames} savingId={savingId} setDraftNames={setDraftNames} saveName={saveName} generateLink={generateLink} scheduleVisibility={scheduleVisibility} savingVisibility={savingVisibility} saveVisibility={saveVisibility} />}
       <footer className="site-footer"><strong>Staff Schedule · MANAGER</strong></footer>
 
       {editing && <div className="modal-backdrop"><button type="button" className="modal-scrim" onClick={() => setEditing(null)} aria-label="关闭班次编辑" /><section className="modal shift-editor" role="dialog" aria-modal="true" aria-labelledby="shift-editor-title"><header><div><p className="step-label">修改最终班次</p><h2 id="shift-editor-title">{editing.displayName} · {weekdays[editing.dayIndex]} {shortDate(editing.shiftDate)}</h2></div><button onClick={() => setEditing(null)} aria-label="关闭">×</button></header><div className="availability-reference"><span>员工原始提交</span><strong>{editing.availabilityCode || "没有提交"}</strong></div><form onSubmit={saveEditedAssignment}><fieldset><legend>显示在哪个格子</legend><div className="slot-choice"><button type="button" className={editing.shiftCode === "early" ? "active" : ""} onClick={() => setEditing({ ...editing, shiftCode: "early" })}>早班格</button><button type="button" className={editing.shiftCode === "late" ? "active" : ""} onClick={() => setEditing({ ...editing, shiftCode: "late" })}>晚班格</button></div></fieldset><div className="custom-time-row"><label>开始时间<select value={editing.startMinutes} onChange={(event) => setEditing({ ...editing, startMinutes: Number(event.target.value) })}>{managerTimeOptions(editing.dayIndex).map((time) => <option key={time.value} value={time.value}>{time.label}</option>)}</select></label><span>→</span><label>结束时间<select value={editing.endMinutes} onChange={(event) => setEditing({ ...editing, endMinutes: Number(event.target.value) })}>{managerEndOptions(editing.dayIndex).filter((time) => time.value > editing.startMinutes).map((time) => <option key={time.value} value={time.value}>{time.label}</option>)}</select></label></div><p>特殊时间会直接写在所选格子里。两个格子同时安排时，时间必须连续。</p><footer><button type="button" className="danger-text" onClick={() => removeAssignment(editing)}>清除班次</button><div><button type="button" onClick={() => setEditing(null)}>取消</button><button className="primary" type="submit">保存时间</button></div></footer></form></section></div>}
@@ -231,8 +244,9 @@ function Notice({ error, text, close }: { error: boolean; text: string; close: (
 function EmployeeManager(props: {
   records: ManagerRecord[]; linkStates: LinkState[]; generatedLinks: Record<number, string>; draftNames: Record<number, string>; savingId: number | null;
   setDraftNames: React.Dispatch<React.SetStateAction<Record<number, string>>>; saveName: (id: number) => void; generateLink: (id: number) => void;
+  scheduleVisibility: ScheduleVisibility; savingVisibility: boolean; saveVisibility: (value: ScheduleVisibility) => void;
 }) {
-  return <section className="surface employee-admin"><div className="section-heading"><div><p className="step-label">员工管理</p><h2>姓名与个人 PIN</h2><p>员工自己设置四位 PIN；经理只能重置并发送新链接，不能查看员工 PIN。</p></div><span className="count-badge">固定 8 个员工位置</span></div><div className="manager-name-grid">{props.records.map((record) => { const linkState = props.linkStates.find((item) => item.employeeId === record.employeeId); return <article className="manager-name-card" key={record.employeeId}><div className="employee-number">#{String(record.employeeId).padStart(2, "0")}</div><div className="employee-edit"><label>显示名称<input aria-label={`员工 ${record.employeeId} 姓名`} maxLength={40} value={props.draftNames[record.employeeId] ?? ""} onChange={(event) => props.setDraftNames((current) => ({ ...current, [record.employeeId]: event.target.value }))} /></label><span className={`pin-status ${linkState?.pinConfigured ? "ready" : ""}`}>{linkState?.pinConfigured ? "PIN 已设置" : linkState?.hasLink ? "等待员工设置 PIN" : "尚未生成链接"}</span></div><div className="employee-actions"><button onClick={() => props.saveName(record.employeeId)} disabled={props.savingId === record.employeeId || (props.draftNames[record.employeeId] ?? "").trim() === record.displayName}>保存名称</button><button className="secondary" onClick={() => props.generateLink(record.employeeId)} disabled={props.savingId === record.employeeId}>{linkState?.pinConfigured ? "重置 PIN 并复制链接" : "生成 PIN 设置链接"}</button></div>{props.generatedLinks[record.employeeId] && <input className="generated-link" readOnly value={props.generatedLinks[record.employeeId]} onFocus={(event) => event.currentTarget.select()} aria-label={`${record.displayName} 新 PIN 设置链接`} />}</article>; })}</div></section>;
+  return <section className="surface employee-admin"><div className="section-heading"><div><p className="step-label">员工管理</p><h2>姓名与个人 PIN</h2><p>员工自己设置四位 PIN；经理只能重置并发送新链接，不能查看员工 PIN。</p></div><span className="count-badge">固定 8 个员工位置</span></div><fieldset className="privacy-setting"><legend>员工能看到的正式班表</legend><div className="slot-choice"><button type="button" className={props.scheduleVisibility === "full" ? "active" : ""} disabled={props.savingVisibility} aria-pressed={props.scheduleVisibility === "full"} onClick={() => props.saveVisibility("full")}>完整班表（含所有人姓名）</button><button type="button" className={props.scheduleVisibility === "own" ? "active" : ""} disabled={props.savingVisibility} aria-pressed={props.scheduleVisibility === "own"} onClick={() => props.saveVisibility("own")}>只看自己的班次</button></div><p>选择“只看自己的班次”后，服务器不会把其他员工的姓名和班次发给员工手机。显示名称可以用昵称或缩写，不必填真实全名。</p></fieldset><div className="manager-name-grid">{props.records.map((record) => { const linkState = props.linkStates.find((item) => item.employeeId === record.employeeId); return <article className="manager-name-card" key={record.employeeId}><div className="employee-number">#{String(record.employeeId).padStart(2, "0")}</div><div className="employee-edit"><label>显示名称<input aria-label={`员工 ${record.employeeId} 姓名`} maxLength={40} value={props.draftNames[record.employeeId] ?? ""} onChange={(event) => props.setDraftNames((current) => ({ ...current, [record.employeeId]: event.target.value }))} /></label><span className={`pin-status ${linkState?.pinConfigured ? "ready" : ""}`}>{linkState?.pinConfigured ? "PIN 已设置" : linkState?.hasLink ? "等待员工设置 PIN" : "尚未生成链接"}</span></div><div className="employee-actions"><button onClick={() => props.saveName(record.employeeId)} disabled={props.savingId === record.employeeId || (props.draftNames[record.employeeId] ?? "").trim() === record.displayName}>保存名称</button><button className="secondary" onClick={() => props.generateLink(record.employeeId)} disabled={props.savingId === record.employeeId}>{linkState?.pinConfigured ? "重置 PIN 并复制链接" : "生成 PIN 设置链接"}</button></div>{props.generatedLinks[record.employeeId] && <input className="generated-link" readOnly value={props.generatedLinks[record.employeeId]} onFocus={(event) => event.currentTarget.select()} aria-label={`${record.displayName} 新 PIN 设置链接`} />}</article>; })}</div></section>;
 }
 
 function ManagerLogin({ pin, setPin, login, error, language, setLanguage }: { pin: string; setPin: (value: string) => void; login: (event: FormEvent) => void; error: string; language: "zh" | "en"; setLanguage: (language: "zh" | "en") => void }) {

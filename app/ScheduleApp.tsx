@@ -18,6 +18,7 @@ type EmployeeData = {
   weekStart: string;
   currentWeekStart: string;
   publishedSchedules: { current: PublishedWeek; next: PublishedWeek };
+  scheduleVisibility?: "full" | "own";
   error?: string;
 };
 
@@ -30,6 +31,7 @@ export default function ScheduleApp() {
   const [weekStart, setWeekStart] = useState("");
   const [availability, setAvailability] = useState<AvailabilityMap>({});
   const [published, setPublished] = useState<EmployeeData["publishedSchedules"] | null>(null);
+  const [scheduleVisibility, setScheduleVisibility] = useState<"full" | "own">("full");
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [message, setMessage] = useState("");
   const [editingDay, setEditingDay] = useState<number | null>(null);
@@ -45,7 +47,7 @@ export default function ScheduleApp() {
       if (response.status === 401) { setAuthorized(false); return; }
       if (!response.ok) throw new Error(data.error || "个人时间暂时无法打开。");
       setAuthorized(true); setEmployee(data.employee); setWeekStart(data.weekStart);
-      setAvailability(data.record.availability); setPublished(data.publishedSchedules);
+      setAvailability(data.record.availability); setPublished(data.publishedSchedules); setScheduleVisibility(data.scheduleVisibility ?? "full");
       setStatus(data.record.updatedAt ? "saved" : "idle");
     } catch (caught) {
       setStatus("error"); setMessage(caught instanceof Error ? caught.message : "个人时间暂时无法打开。");
@@ -108,7 +110,7 @@ export default function ScheduleApp() {
         <div className="section-heading"><div><p className="step-label">{t("下周可上班时间", "NEXT-WEEK AVAILABILITY")}</p><h2>{employee.displayName}{t("，请选择每一天", ", choose each day")}</h2></div><div className={`save-state ${status}`}><i />{status === "saving" ? t("自动保存中…", "Saving…") : status === "saved" ? t("已自动保存", "Saved automatically") : status === "error" ? t("保存失败", "Could not save") : t("修改后自动保存", "Saves automatically")}</div></div>
         <div className="availability-list">{dates.map((date, index) => { const selected = availability[date]; return <article className={`availability-row ${selected ? "has-value" : ""}`} key={date}><header><span>{language === "en" ? englishWeekdays[index] : weekdays[index]}</span><strong>{shortDate(date, language)}</strong>{selected && <em>{selected}</em>}</header><div className="availability-actions">{dayOptions(index, language).map((option) => <button key={option.value} className={selected === option.value ? "selected" : ""} onClick={() => updateDay(date, selected === option.value ? null : option.value)}><span>{option.label}</span><small>{option.hint}</small>{selected === option.value && <b>✓</b>}</button>)}<button className={selected && !isPreset(selected, index) ? "selected custom" : "custom"} onClick={() => openEditor(index)}><span>{t("自定义", "Custom")}</span><small>{selected && !isPreset(selected, index) ? selected : t("选择时间", "Choose time")}</small>{selected && !isPreset(selected, index) && <b>✓</b>}</button>{selected && <button className="clear-choice" onClick={() => updateDay(date, null)}>{t("清空", "Clear")}</button>}</div></article>; })}</div>
         <footer className="privacy-footer"><strong>C = 12:00 AM</strong><span>{t("每天保存一个连续时段 · 其他员工看不到你的选择", "Save one continuous time range each day · Other employees cannot see your choices")}</span></footer>
-      </section> : <ScheduleView published={published} employee={employee} language={language} />}
+      </section> : <ScheduleView published={published} employee={employee} language={language} visibility={scheduleVisibility} />}
 
       <footer className="site-footer"><strong>Staff Schedule</strong></footer>
       <nav className="mobile-bottom-nav" aria-label={t("员工手机导航", "Staff mobile navigation")}><button className={activeView === "availability" ? "active" : ""} onClick={() => setActiveView("availability")}><span>＋</span>{t("下周时间", "Next week")}</button><button className={activeView === "schedule" ? "active" : ""} onClick={() => setActiveView("schedule")}><span>▦</span>{t("正式班表", "Schedule")}</button></nav>
@@ -126,10 +128,12 @@ function Notice({ error, text, close }: { error: boolean; text: string; close: (
   return <div className={`notice ${error ? "notice-error" : ""}`} role="status"><span>{error ? "!" : "✓"}</span>{text}<button onClick={close} aria-label="关闭提示">×</button></div>;
 }
 
-function ScheduleView({ published, employee, language }: { published: EmployeeData["publishedSchedules"] | null; employee: Employee; language: "zh" | "en" }) {
+function ScheduleView({ published, employee, language, visibility }: { published: EmployeeData["publishedSchedules"] | null; employee: Employee; language: "zh" | "en"; visibility: "full" | "own" }) {
   const current = published?.current ?? null;
   const next = published?.next?.publishedAt ? published.next : null;
-  return <div className="schedule-view"><MyShiftSummary schedule={current} employee={employee} language={language} label={language === "en" ? "My shifts this week" : "我的本周班次"} /><PublishedSchedule schedule={current} activeEmployeeId={employee.id} language={language} label={language === "en" ? "Full schedule this week" : "本周完整班表"} pending />{next ? <><MyShiftSummary schedule={next} employee={employee} language={language} label={language === "en" ? "My shifts next week" : "我的下周班次"} /><PublishedSchedule schedule={next} activeEmployeeId={employee.id} language={language} label={language === "en" ? "Full schedule next week" : "下周完整班表"} /></> : <section className="surface pending-schedule upcoming-schedule"><div className="section-heading"><div><p className="step-label">{language === "en" ? "NEXT WEEK" : "下周班表"}</p><h2>{language === "en" ? "Next week's schedule is not published yet" : "下周班表还没有出"}</h2></div><span className="count-badge muted">{language === "en" ? "Not published" : "尚未发布"}</span></div></section>}</div>;
+  const showTeam = visibility === "full";
+  const pendingCurrent = !current?.publishedAt && !showTeam ? <PublishedSchedule schedule={current} activeEmployeeId={employee.id} language={language} label={language === "en" ? "This week" : "本周班表"} pending /> : null;
+  return <div className="schedule-view"><MyShiftSummary schedule={current} employee={employee} language={language} label={language === "en" ? "My shifts this week" : "我的本周班次"} />{showTeam ? <PublishedSchedule schedule={current} activeEmployeeId={employee.id} language={language} label={language === "en" ? "Full schedule this week" : "本周完整班表"} pending /> : pendingCurrent}{next ? <><MyShiftSummary schedule={next} employee={employee} language={language} label={language === "en" ? "My shifts next week" : "我的下周班次"} />{showTeam && <PublishedSchedule schedule={next} activeEmployeeId={employee.id} language={language} label={language === "en" ? "Full schedule next week" : "下周完整班表"} />}</> : <section className="surface pending-schedule upcoming-schedule"><div className="section-heading"><div><p className="step-label">{language === "en" ? "NEXT WEEK" : "下周班表"}</p><h2>{language === "en" ? "Next week's schedule is not published yet" : "下周班表还没有出"}</h2></div><span className="count-badge muted">{language === "en" ? "Not published" : "尚未发布"}</span></div></section>}</div>;
 }
 
 function MyShiftSummary({ schedule, employee, label, language }: { schedule: PublishedWeek | null; employee: Employee; label: string; language: "zh" | "en" }) {
@@ -152,8 +156,8 @@ function PublishedSchedule({ schedule, activeEmployeeId, label, pending = false,
 
 function AccessPage() {
   const { language, setLanguage, t } = useLanguage();
-  const [employees, setEmployees] = useState<Employee[]>([]);
   const [selected, setSelected] = useState<Employee | null>(null);
+  const [deviceChecked, setDeviceChecked] = useState(false);
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
   const [setupEmployee, setSetupEmployee] = useState<Employee | null>(null);
@@ -170,8 +174,9 @@ function AccessPage() {
         return;
       }
       const response = await fetch("/api/employees", { cache: "no-store" });
-      const data = await response.json() as { employees?: Employee[]; error?: string };
-      if (response.ok) setEmployees(data.employees ?? []); else setError(data.error || "员工名单暂时无法打开。");
+      const data = await response.json() as { employee?: Employee | null; error?: string };
+      if (response.ok) setSelected(data.employee ?? null); else setError(data.error || "员工入口暂时无法打开。");
+      setDeviceChecked(true);
     }
     const timer = window.setTimeout(loadAccess, 0); return () => window.clearTimeout(timer);
   }, [setupMode]);
@@ -179,10 +184,16 @@ function AccessPage() {
   async function login(event: FormEvent) {
     event.preventDefault(); if (!selected) return;
     setBusy(true); setError("");
-    const response = await fetch("/api/employee/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ employeeId: selected.id, pin }) });
+    const response = await fetch("/api/employee/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pin }) });
     const data = await response.json() as { error?: string };
     if (!response.ok) { setError(data.error || "登录失败。"); setBusy(false); return; }
     window.location.replace("/");
+  }
+
+  async function forgetDevice() {
+    setBusy(true);
+    await fetch("/api/employee/forget", { method: "POST" });
+    setSelected(null); setPin(""); setError(""); setBusy(false);
   }
 
   async function setupPin(event: FormEvent) {
@@ -193,5 +204,5 @@ function AccessPage() {
     window.location.replace("/");
   }
 
-  return <main className="auth-shell"><BrandHeader subtitle="STAFF ACCESS" actions={<><LanguagePicker language={language} setLanguage={setLanguage} /><Link className="ghost-action" href="/manager">{t("经理入口", "Manager portal")}</Link></>} />{setupMode ? <section className="auth-layout"><div className="auth-copy"><p className="eyebrow">{t("第一次使用／重置 PIN", "FIRST TIME / RESET PIN")}</p><h1>{t("设置你的", "Set your")}<br /><em>{t("四位 PIN。", "four-digit PIN.")}</em></h1><p>{setupEmployee ? t(`你好，${setupEmployee.displayName}。这个 PIN 由你自己记住，经理只能重置，不能查看。`, `Hello, ${setupEmployee.displayName}. Only you know this PIN; a manager can only reset it.`) : t("正在确认你的设置链接。", "Checking your setup link.")}</p></div><form className="pin-card" autoComplete="off" onSubmit={setupPin}><span className="auth-kicker">STAFF PIN</span><h2>{setupEmployee ? t(`${setupEmployee.displayName}，设置 PIN`, `${setupEmployee.displayName}, set your PIN`) : t("等待链接确认", "Checking link")}</h2><label>{t("输入四位数字", "Enter four digits")}<input aria-label={t("设置四位员工 PIN", "Set four-digit staff PIN")} autoComplete="new-password" inputMode="numeric" name="employee-pin-new" pattern="[0-9]{4}" maxLength={4} type="password" value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="••••" required /></label><label>{t("再输入一次", "Enter it again")}<input aria-label={t("确认四位员工 PIN", "Confirm four-digit staff PIN")} autoComplete="new-password" inputMode="numeric" name="employee-pin-confirm" pattern="[0-9]{4}" maxLength={4} type="password" value={confirmPin} onChange={(event) => setConfirmPin(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="••••" required /></label><button disabled={!setupEmployee || pin.length !== 4 || confirmPin.length !== 4 || busy}>{busy ? t("设置中…", "Setting up…") : t("设置并进入我的页面", "Set PIN and open my schedule")}</button>{error && <p className="form-error" role="alert">{error}</p>}<small>{t("链接设置成功后会自动失效。", "This setup link expires after use.")}</small></form></section> : <section className="staff-auth-layout"><div className="auth-copy"><p className="eyebrow">{t("员工入口", "STAFF PORTAL")}</p><h1>{t("选择名字，", "Choose your name,")}<br /><em>{t("进入我的时间表。", "open your schedule.")}</em></h1>{invalid && <p className="form-error">{t("这个设置链接无效或已经使用，请联系经理重新发送。", "This setup link is invalid or has already been used. Ask your manager for a new one.")}</p>}</div>{selected ? <form className="pin-card staff-pin-card" autoComplete="off" onSubmit={login}><button type="button" className="back-choice" onClick={() => { setSelected(null); setPin(""); setError(""); }}>{t("← 重新选择名字", "← Choose a different name")}</button><span className="auth-kicker">EMPLOYEE #{String(selected.id).padStart(2, "0")}</span><h2>{selected.displayName}</h2><label>{t("四位员工 PIN", "Four-digit staff PIN")}<input aria-label={`${selected.displayName} ${t("四位员工 PIN", "four-digit staff PIN")}`} autoComplete="new-password" inputMode="numeric" name={`employee-pin-${selected.id}`} pattern="[0-9]{4}" maxLength={4} type="password" value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="••••" required /></label><button disabled={pin.length !== 4 || busy}>{busy ? t("登录中…", "Signing in…") : t("进入我的时间表", "Open my schedule")}</button>{error && <p className="form-error" role="alert">{error}</p>}<small>{t("忘记 PIN？请联系经理重新发送设置链接。", "Forgot your PIN? Ask your manager for a new setup link.")}</small></form> : <div className="staff-name-picker">{employees.map((person) => <button key={person.id} onClick={() => { setSelected(person); setPin(""); setError(""); }}><span>#{String(person.id).padStart(2, "0")}</span><strong>{person.displayName}</strong><small>{t("这是我 →", "This is me →")}</small></button>)}{error && <p className="form-error" role="alert">{error}</p>}</div>}</section>}</main>;
+  return <main className="auth-shell"><BrandHeader subtitle="STAFF ACCESS" actions={<><LanguagePicker language={language} setLanguage={setLanguage} /><Link className="ghost-action" href="/manager">{t("经理入口", "Manager portal")}</Link></>} />{setupMode ? <section className="auth-layout"><div className="auth-copy"><p className="eyebrow">{t("第一次使用／重置 PIN", "FIRST TIME / RESET PIN")}</p><h1>{t("设置你的", "Set your")}<br /><em>{t("四位 PIN。", "four-digit PIN.")}</em></h1><p>{setupEmployee ? t(`你好，${setupEmployee.displayName}。这个 PIN 由你自己记住，经理只能重置，不能查看。`, `Hello, ${setupEmployee.displayName}. Only you know this PIN; a manager can only reset it.`) : t("正在确认你的设置链接。", "Checking your setup link.")}</p></div><form className="pin-card" autoComplete="off" onSubmit={setupPin}><span className="auth-kicker">STAFF PIN</span><h2>{setupEmployee ? t(`${setupEmployee.displayName}，设置 PIN`, `${setupEmployee.displayName}, set your PIN`) : t("等待链接确认", "Checking link")}</h2><label>{t("输入四位数字", "Enter four digits")}<input aria-label={t("设置四位员工 PIN", "Set four-digit staff PIN")} autoComplete="new-password" inputMode="numeric" name="employee-pin-new" pattern="[0-9]{4}" maxLength={4} type="password" value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="••••" required /></label><label>{t("再输入一次", "Enter it again")}<input aria-label={t("确认四位员工 PIN", "Confirm four-digit staff PIN")} autoComplete="new-password" inputMode="numeric" name="employee-pin-confirm" pattern="[0-9]{4}" maxLength={4} type="password" value={confirmPin} onChange={(event) => setConfirmPin(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="••••" required /></label><button disabled={!setupEmployee || pin.length !== 4 || confirmPin.length !== 4 || busy}>{busy ? t("设置中…", "Setting up…") : t("设置并进入我的页面", "Set PIN and open my schedule")}</button>{error && <p className="form-error" role="alert">{error}</p>}<small>{t("链接设置成功后会自动失效。", "This setup link expires after use.")}</small></form></section> : <section className="staff-auth-layout"><div className="auth-copy"><p className="eyebrow">{t("员工入口", "STAFF PORTAL")}</p><h1>{selected ? t("输入 PIN，", "Enter your PIN,") : t("打开个人链接，", "Open your personal link,")}<br /><em>{t("进入我的时间表。", "open your schedule.")}</em></h1>{invalid && <p className="form-error">{t("这个设置链接无效或已经使用，请联系经理重新发送。", "This setup link is invalid or has already been used. Ask your manager for a new one.")}</p>}</div>{selected ? <form className="pin-card staff-pin-card" autoComplete="off" onSubmit={login}><button type="button" className="back-choice" disabled={busy} onClick={forgetDevice}>{t("不是我？退出这台设备", "Not you? Remove this device")}</button><span className="auth-kicker">EMPLOYEE #{String(selected.id).padStart(2, "0")}</span><h2>{selected.displayName}</h2><label>{t("四位员工 PIN", "Four-digit staff PIN")}<input aria-label={`${selected.displayName} ${t("四位员工 PIN", "four-digit staff PIN")}`} autoComplete="new-password" inputMode="numeric" name={`employee-pin-${selected.id}`} pattern="[0-9]{4}" maxLength={4} type="password" value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="••••" required /></label><button disabled={pin.length !== 4 || busy}>{busy ? t("登录中…", "Signing in…") : t("进入我的时间表", "Open my schedule")}</button>{error && <p className="form-error" role="alert">{error}</p>}<small>{t("忘记 PIN？请联系经理重新发送设置链接。", "Forgot your PIN? Ask your manager for a new setup link.")}</small></form> : deviceChecked ? <div className="pin-card staff-pin-card"><span className="auth-kicker">STAFF ACCESS</span><h2>{t("请使用经理发给你的个人链接", "Use the personal link from your manager")}</h2><p>{t("为了保护员工隐私，这里不显示员工名单。第一次使用、换手机或清除了浏览器数据时，请让经理重新发送设置链接。", "To protect staff privacy, the team list is never shown here. On first use, a new phone, or after clearing browser data, ask your manager for a new setup link.")}</p>{error && <p className="form-error" role="alert">{error}</p>}</div> : null}</section>}</main>;
 }
