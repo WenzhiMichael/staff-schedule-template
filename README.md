@@ -11,7 +11,7 @@ A small-team scheduling app with English and Chinese interfaces. Employees submi
 - PDF, JPG, and Excel (.xlsx) exports; mobile layouts and Chinese/English switching.
 - Monday rollover using `America/Toronto`. Weekdays use 11–18 / 18–C; weekends use 11:30–18 / 18–C. `C` means midnight.
 
-The name picker is visible before login. PIN authentication protects availability and schedule access, not the list of employee names.
+The staff home page never shows the team list. A personal setup link binds the phone to one employee, and the home page then shows only that person and asks for their PIN. A new phone, or a browser with cleared data, needs a new link from the manager. On a shared phone, **Not you? Remove this device** removes the binding. Managers can also limit employees to seeing only their own shifts (Employees → schedule visibility), in which case other names never leave the server. Login is locked after 5 wrong PINs from one IP, or 10 from any IPs, within 15 minutes.
 
 ## Run locally
 
